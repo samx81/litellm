@@ -350,51 +350,54 @@ async def ollama_aembeddings(
         ):  # completion(top_k=3) > cohere_config(top_k=3) <- allows for dynamic variables to be passed in
             optional_params[k] = v
 
-    data = {
-        "model": model,
-        "prompt": prompt,
-    }
-    ## LOGGING
-    logging_obj.pre_call(
-        input=None,
-        api_key=None,
-        additional_args={"api_base": url, "complete_input_dict": data, "headers": {}},
-    )
+    prompts = [prompt] if isinstance(prompt, str) else prompt
+    embeddings = []
     timeout = aiohttp.ClientTimeout(total=litellm.request_timeout)  # 10 minutes
     async with aiohttp.ClientSession(timeout=timeout) as session:
-        response = await session.post(url, json=data)
-
-        if response.status != 200:
-            text = await response.text()
-            raise OllamaError(status_code=response.status, message=text)
-
-        ## LOGGING
-        logging_obj.post_call(
-            input=prompt,
-            api_key="",
-            original_response=response.text,
-            additional_args={
-                "headers": None,
-                "api_base": api_base,
-            },
-        )
-
-        response_json = await response.json()
-        embeddings = response_json["embedding"]
-        ## RESPONSE OBJECT
-        output_data = []
-        for idx, embedding in enumerate(embeddings):
-            output_data.append(
-                {"object": "embedding", "index": idx, "embedding": embedding}
+        for prompt in prompts:
+            data = {
+                "model": model,
+                "prompt": prompt,
+            }
+            ## LOGGING
+            logging_obj.pre_call(
+                input=None,
+                api_key=None,
+                additional_args={"api_base": url, "complete_input_dict": data, "headers": {}},
             )
-        model_response["object"] = "list"
-        model_response["data"] = output_data
-        model_response["model"] = model
+            response = await session.post(url, json=data)
 
-        input_tokens = len(encoding.encode(prompt))
+            if response.status != 200:
+                text = await response.text()
+                raise OllamaError(status_code=response.status, message=text)
 
-        model_response["usage"] = {
-            "prompt_tokens": input_tokens,
-            "total_tokens": input_tokens,
-        }
-        return model_response
+            ## LOGGING
+            logging_obj.post_call(
+                input=prompt,
+                api_key="",
+                original_response=response.text,
+                additional_args={
+                    "headers": None,
+                    "api_base": api_base,
+                },
+            )
+
+            response_json = await response.json()
+            embeddings.append(response_json["embedding"])
+    ## RESPONSE OBJECT
+    output_data = []
+    for idx, embedding in enumerate(embeddings):
+        output_data.append(
+            {"object": "embedding", "index": idx, "embedding": embedding}
+        )
+    model_response["object"] = "list"
+    model_response["data"] = output_data
+    model_response["model"] = model
+
+    input_tokens = sum(len(encoding.encode(prompt)) for prompt in prompts)
+
+    model_response["usage"] = {
+        "prompt_tokens": input_tokens,
+        "total_tokens": input_tokens,
+    }
+    return model_response
